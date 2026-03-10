@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aurix"
-version = "0.1.0"
-description = "Enterprise platform for confident automation of agentic workflows"
+version = "1.0.0"
+description = "Confidence-Driven Autonomy Platform for Enterprise AI"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
-    { name = "Aurix Team" },
+    { name = "AURIX Contributors" },
 ]
 keywords = [
     "automation",
@@ -60,16 +60,17 @@ dev = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/palashroy/aurix#readme"
-Issues = "https://github.com/palashroy/aurix/issues"
-Source = "https://github.com/palashroy/aurix"
+Homepage = "https://github.com/cstpalash/aurix"
+Documentation = "https://github.com/cstpalash/aurix#readme"
+Issues = "https://github.com/cstpalash/aurix/issues"
+Source = "https://github.com/cstpalash/aurix"
+Changelog = "https://github.com/cstpalash/aurix/blob/main/CHANGELOG.md"
 
 [project.scripts]
 aurix = "aurix.cli.commands:app"
 
 [project.entry-points."aurix.modules"]
 code_review = "aurix.modules.code_review:CodeReviewModule"
-sdlc = "aurix.modules.sdlc:SDLCModule"
 
 [tool.hatch.build.targets.wheel]
 packages = ["aurix"]
