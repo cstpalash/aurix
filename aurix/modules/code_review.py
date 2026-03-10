@@ -2,11 +2,13 @@
 Code Review Automation Module for Aurix Platform
 
 Provides comprehensive automated code review with:
-- Intent analysis
-- Risk profiling
+- AI-powered intent analysis (understands what code DOES)
+- AI-powered semantic risk assessment (detects auth, data, security changes)
 - Multi-stage review pipeline
 - Confidence-based automation graduation
-- AI-enhanced analysis via GPT-4o-mini
+- AI-enhanced code analysis via GPT-4o-mini
+- Auto-merge when confidence thresholds are met
+- Specific file/line annotations for human review
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from aurix.ai.reviewer import AIReviewer
+    from aurix.ai.reviewer import AIReviewer, IntentAnalysis, SemanticRiskAnalysis
 
 from aurix.core.risk_assessor import (
     CodeReviewRiskAssessor,
@@ -37,8 +39,19 @@ from aurix.core.confidence_engine import (
     Outcome,
     OutcomeType,
 )
-from aurix.core.task_decomposer import TaskDecomposer, TaskGraph, Task
-from aurix.core.micro_agent import AgentOrchestrator, AgentResult
+from aurix.models.review_action import (
+    ReviewAction,
+    ReviewActionResult,
+    ReviewPriority,
+    HumanReviewRequest,
+    FileAnnotation,
+    LineRange,
+)
+from aurix.config.team_config import (
+    TeamConfig,
+    ConfigLoader,
+    load_team_config,
+)
 
 
 class ReviewDecision(str, Enum):
@@ -193,14 +206,11 @@ class CodeReviewModule:
         self,
         confidence_engine: Optional[ConfidenceEngine] = None,
         risk_assessor: Optional[CodeReviewRiskAssessor] = None,
-        orchestrator: Optional[AgentOrchestrator] = None,
         ai_reviewer: Optional["AIReviewer"] = None,
     ):
         """Initialize code review module."""
         self.confidence_engine = confidence_engine or ConfidenceEngine()
         self.risk_assessor = risk_assessor or CodeReviewRiskAssessor()
-        self.orchestrator = orchestrator or AgentOrchestrator()
-        self.task_decomposer = TaskDecomposer()
         
         # AI reviewer (optional - enhanced reviews when available)
         self._ai_reviewer = ai_reviewer
@@ -212,6 +222,10 @@ class CodeReviewModule:
         
         # Current automation mode per repo
         self._repo_modes: Dict[str, AutomationMode] = {}
+        
+        # Cache for AI analysis results
+        self._intent_analysis: Optional[Any] = None
+        self._semantic_risk: Optional[Any] = None
     
     async def review_pull_request(
         self,
@@ -220,6 +234,15 @@ class CodeReviewModule:
     ) -> ReviewResult:
         """
         Perform automated code review on a pull request.
+        
+        The review pipeline:
+        1. AI Intent Detection - Understand what the code DOES (not just title matching)
+        2. AI Semantic Risk Assessment - Identify auth, data, security implications
+        3. Execute Checks - Security, logic, style, complexity analysis
+        4. Calculate Score - Weighted combination of all checks
+        5. Make Decision - APPROVE, REQUEST_CHANGES, NEEDS_DISCUSSION, or BLOCK
+        6. Check Escalation - Determine if human review is needed
+        7. Generate Summary - Create PR comment with findings
         
         Args:
             pr_info: Pull request information
@@ -231,39 +254,36 @@ class CodeReviewModule:
         context = context or {}
         start_time = datetime.utcnow()
         
-        # Step 1: Detect code intent
-        pr_info.detected_intent = self._detect_intent(pr_info)
+        # Initialize AI reviewer
+        await self._ensure_ai_reviewer()
         
-        # Step 2: Assess risk
-        risk_profile = self._assess_risk(pr_info)
+        # Step 1: AI-powered intent detection
+        # This reads the actual code to understand what changes do
+        pr_info.detected_intent = await self._detect_intent_with_ai(pr_info)
         
-        # Step 3: Decompose into review tasks
-        review_graph = self.task_decomposer.decompose(
-            f"review_{pr_info.pr_id}",
-            pattern="code_review",
-            context={"pr_info": pr_info.dict()},
-        )
+        # Step 2: AI-powered semantic risk assessment
+        # This identifies if code touches auth, data, security, etc.
+        risk_profile = await self._assess_risk_with_ai(pr_info)
         
-        # Step 4: Execute review checks
+        # Step 3: Execute review checks (security, logic, style, etc.)
         automation_mode = self._get_automation_mode(pr_info.repo, risk_profile)
         
         check_results = await self._execute_checks(
             pr_info,
-            review_graph,
             context,
         )
         
-        # Step 5: Calculate overall score
+        # Step 4: Calculate overall score
         overall_score = self._calculate_overall_score(check_results)
         
-        # Step 6: Make decision
+        # Step 5: Make decision
         decision, confidence = self._make_decision(
             overall_score,
             check_results,
             risk_profile,
         )
         
-        # Step 7: Determine if human review needed
+        # Step 6: Determine if human review needed
         human_required, escalation_reason = self._check_escalation(
             decision,
             confidence,
@@ -272,14 +292,16 @@ class CodeReviewModule:
             check_results,
         )
         
-        # Step 8: Generate comments
+        # Step 7: Generate comments
         comments = self._generate_comments(check_results)
         summary = self._generate_summary(
             pr_info,
             check_results,
             decision,
             confidence,
-            ai_analysis=self._ai_analysis,  # Include AI insights in summary
+            ai_analysis=self._ai_analysis,
+            intent_analysis=self._intent_analysis,
+            semantic_risk=self._semantic_risk,
         )
         
         # Calculate duration
@@ -365,6 +387,244 @@ class CodeReviewModule:
         
         return CodeIntent.UNKNOWN
     
+    async def _ensure_ai_reviewer(self) -> None:
+        """Initialize AI reviewer if not already done."""
+        if self._ai_reviewer is None:
+            try:
+                from aurix.ai.reviewer import AIReviewer
+                self._ai_reviewer = AIReviewer()
+                if not self._ai_reviewer.is_available():
+                    self._ai_reviewer = None
+            except ImportError:
+                pass
+    
+    async def _detect_intent_with_ai(self, pr_info: PullRequestInfo) -> CodeIntent:
+        """
+        AI-powered intent detection.
+        
+        Instead of just pattern matching on titles, this actually reads
+        the code diff and uses AI to understand what the changes do.
+        Falls back to heuristic detection if AI unavailable.
+        
+        Args:
+            pr_info: Pull request information with code diffs
+            
+        Returns:
+            Detected intent (CodeIntent enum)
+        """
+        # Try AI-powered intent detection
+        if self._ai_reviewer is not None:
+            try:
+                from aurix.ai.reviewer import IntentAnalysis
+                
+                # Call AI to analyze the actual code
+                intent_analysis: IntentAnalysis = await self._ai_reviewer.analyze_intent(
+                    title=pr_info.title,
+                    description=pr_info.description,
+                    files=pr_info.files,
+                    labels=pr_info.labels,
+                )
+                
+                # Cache for summary generation
+                self._intent_analysis = intent_analysis
+                
+                # Map AI-detected intent to our CodeIntent enum
+                intent_mapping = {
+                    "feature": CodeIntent.FEATURE,
+                    "bugfix": CodeIntent.BUGFIX,
+                    "bug_fix": CodeIntent.BUGFIX,
+                    "hotfix": CodeIntent.HOTFIX,
+                    "hot_fix": CodeIntent.HOTFIX,
+                    "refactor": CodeIntent.REFACTOR,
+                    "refactoring": CodeIntent.REFACTOR,
+                    "test": CodeIntent.TEST,
+                    "testing": CodeIntent.TEST,
+                    "tests": CodeIntent.TEST,
+                    "documentation": CodeIntent.DOCUMENTATION,
+                    "docs": CodeIntent.DOCUMENTATION,
+                    "security": CodeIntent.SECURITY_PATCH,
+                    "security_patch": CodeIntent.SECURITY_PATCH,
+                    "security_fix": CodeIntent.SECURITY_PATCH,
+                    "performance": CodeIntent.PERFORMANCE,
+                    "optimization": CodeIntent.PERFORMANCE,
+                    "dependency": CodeIntent.DEPENDENCY_UPDATE,
+                    "dependency_update": CodeIntent.DEPENDENCY_UPDATE,
+                    "dependencies": CodeIntent.DEPENDENCY_UPDATE,
+                    "config": CodeIntent.CONFIG,
+                    "configuration": CodeIntent.CONFIG,
+                    "infrastructure": CodeIntent.CONFIG,
+                }
+                
+                primary = intent_analysis.primary_intent.lower().replace(" ", "_")
+                
+                # Check for exact or partial match
+                for key, intent in intent_mapping.items():
+                    if key in primary or primary in key:
+                        return intent
+                
+                # High confidence AI response but unknown mapping - trust it
+                if intent_analysis.confidence > 0.7:
+                    # Return FEATURE as default for high-confidence unknown
+                    return CodeIntent.FEATURE
+                    
+            except Exception:
+                # AI failed - fall back to heuristics
+                pass
+        
+        # Fall back to pattern-based detection
+        return self._detect_intent(pr_info)
+    
+    async def _assess_risk_with_ai(self, pr_info: PullRequestInfo) -> RiskProfile:
+        """
+        AI-powered semantic risk assessment.
+        
+        This analyzes the actual code to detect if changes touch:
+        - Authentication/authorization logic
+        - Payment processing
+        - PII/sensitive data handling
+        - Database schemas
+        - API endpoints
+        - Security configurations
+        - Infrastructure code
+        
+        Falls back to heuristic risk assessment if AI unavailable.
+        
+        Args:
+            pr_info: Pull request information with code diffs
+            
+        Returns:
+            RiskProfile with semantic understanding
+        """
+        # Start with heuristic risk assessment
+        risk_profile = self._assess_risk(pr_info)
+        
+        # Enhance with AI semantic analysis
+        if self._ai_reviewer is not None:
+            try:
+                from aurix.ai.reviewer import SemanticRiskAnalysis
+                
+                # Call AI to analyze semantic risk
+                semantic_risk: SemanticRiskAnalysis = await self._ai_reviewer.analyze_semantic_risk(
+                    title=pr_info.title,
+                    description=pr_info.description,
+                    files=pr_info.files,
+                    labels=pr_info.labels,
+                )
+                
+                # Cache for summary generation
+                self._semantic_risk = semantic_risk
+                
+                # Calculate additional risk from semantic analysis
+                semantic_risk_score = 0.0
+                
+                # High-risk areas (each adds to risk)
+                if semantic_risk.touches_authentication:
+                    semantic_risk_score += 0.25
+                    if "authentication" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="authentication",
+                                factor_type="security",
+                                impact_score=0.8,
+                                description="AI detected changes to authentication logic",
+                            )
+                        )
+                
+                if semantic_risk.touches_authorization:
+                    semantic_risk_score += 0.25
+                    if "authorization" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="authorization",
+                                factor_type="security",
+                                impact_score=0.8,
+                                description="AI detected changes to authorization/permissions",
+                            )
+                        )
+                
+                if semantic_risk.touches_payment:
+                    semantic_risk_score += 0.35
+                    if "payment" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="payment",
+                                factor_type="financial",
+                                impact_score=0.95,
+                                description="AI detected changes to payment processing",
+                            )
+                        )
+                
+                if semantic_risk.touches_pii:
+                    semantic_risk_score += 0.30
+                    if "pii" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="pii",
+                                factor_type="compliance",
+                                impact_score=0.85,
+                                description="AI detected handling of personally identifiable information",
+                            )
+                        )
+                
+                if semantic_risk.touches_database:
+                    semantic_risk_score += 0.20
+                    if "database_schema" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="database_schema",
+                                factor_type="data",
+                                impact_score=0.7,
+                                description="AI detected database schema or query changes",
+                            )
+                        )
+                
+                if semantic_risk.touches_security_config:
+                    semantic_risk_score += 0.25
+                    if "security_config" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="security_config",
+                                factor_type="security",
+                                impact_score=0.8,
+                                description="AI detected changes to security configuration",
+                            )
+                        )
+                
+                if semantic_risk.touches_infrastructure:
+                    semantic_risk_score += 0.20
+                    if "infrastructure" not in [f.factor_name for f in risk_profile.factors]:
+                        risk_profile.factors.append(
+                            RiskFactor(
+                                factor_name="infrastructure",
+                                factor_type="infrastructure",
+                                impact_score=0.7,
+                                description="AI detected infrastructure/deployment changes",
+                            )
+                        )
+                
+                # Adjust blast radius
+                blast_radius_map = {"low": 0.0, "medium": 0.1, "high": 0.2, "critical": 0.3}
+                semantic_risk_score += blast_radius_map.get(semantic_risk.blast_radius, 0.0)
+                
+                # Reversibility adjustment
+                reversibility_map = {"easy": -0.1, "moderate": 0.0, "difficult": 0.1, "impossible": 0.25}
+                semantic_risk_score += reversibility_map.get(semantic_risk.reversibility, 0.0)
+                
+                # Merge with existing risk score (weighted average)
+                combined_score = (risk_profile.overall_risk_score * 0.4) + (semantic_risk_score * 0.6)
+                risk_profile.overall_risk_score = min(1.0, round(combined_score, 4))
+                
+                # Recalculate risk level
+                risk_profile.risk_level = self.risk_assessor._determine_risk_level(
+                    risk_profile.overall_risk_score
+                )
+                
+            except Exception:
+                # AI failed - use heuristic risk only
+                pass
+        
+        return risk_profile
+    
     def _assess_risk(self, pr_info: PullRequestInfo) -> RiskProfile:
         """Assess risk of the pull request."""
         # Build diff stats
@@ -394,7 +654,6 @@ class CodeReviewModule:
     async def _execute_checks(
         self,
         pr_info: PullRequestInfo,
-        review_graph: TaskGraph,
         context: Dict[str, Any],
     ) -> Dict[ReviewCheckType, ReviewCheck]:
         """Execute all review checks."""
@@ -925,10 +1184,14 @@ class CodeReviewModule:
         decision: ReviewDecision,
         confidence: float,
         ai_analysis: Optional[Any] = None,
+        intent_analysis: Optional[Any] = None,
+        semantic_risk: Optional[Any] = None,
     ) -> str:
         """Generate review summary with optional AI insights."""
         # Check if AI-enhanced
         ai_enhanced = ai_analysis is not None and hasattr(ai_analysis, 'summary')
+        has_intent_ai = intent_analysis is not None
+        has_semantic_ai = semantic_risk is not None
         
         lines = [
             "## Automated Code Review Summary",
@@ -936,7 +1199,7 @@ class CodeReviewModule:
         ]
         
         # Add AI badge if enhanced
-        if ai_enhanced:
+        if ai_enhanced or has_intent_ai or has_semantic_ai:
             lines.append("🤖 *AI-Enhanced Review (GPT-4o-mini)*")
             lines.append("")
         
@@ -946,6 +1209,82 @@ class CodeReviewModule:
             f"**Decision**: {decision.value.replace('_', ' ').title()}",
             f"**Confidence**: {confidence:.0%}",
             "",
+        ])
+        
+        # Add AI Intent Analysis section
+        if has_intent_ai:
+            lines.extend([
+                "### 🎯 AI Intent Analysis",
+                "",
+            ])
+            if hasattr(intent_analysis, 'summary') and intent_analysis.summary:
+                lines.append(f"**Summary**: {intent_analysis.summary}")
+            if hasattr(intent_analysis, 'primary_intent'):
+                lines.append(f"**Primary Intent**: {intent_analysis.primary_intent}")
+            if hasattr(intent_analysis, 'confidence'):
+                lines.append(f"**Intent Confidence**: {intent_analysis.confidence:.0%}")
+            
+            # Flag potential issues
+            if hasattr(intent_analysis, 'hidden_changes') and intent_analysis.hidden_changes:
+                lines.append("")
+                lines.append("⚠️ **Hidden Changes Detected:**")
+                for change in intent_analysis.hidden_changes[:5]:
+                    lines.append(f"- {change}")
+            
+            if hasattr(intent_analysis, 'scope_creep') and intent_analysis.scope_creep:
+                lines.append("")
+                lines.append("⚠️ **Scope Creep Warning:** PR may be doing more than stated")
+            
+            if hasattr(intent_analysis, 'title_matches_changes') and not intent_analysis.title_matches_changes:
+                lines.append("")
+                lines.append("⚠️ **Title Mismatch:** PR title may not reflect actual changes")
+            
+            lines.append("")
+        
+        # Add AI Semantic Risk section
+        if has_semantic_ai:
+            lines.extend([
+                "### 🔒 AI Semantic Risk Analysis",
+                "",
+            ])
+            
+            risk_areas = []
+            if hasattr(semantic_risk, 'touches_authentication') and semantic_risk.touches_authentication:
+                risk_areas.append("🔐 Authentication")
+            if hasattr(semantic_risk, 'touches_authorization') and semantic_risk.touches_authorization:
+                risk_areas.append("🛡️ Authorization")
+            if hasattr(semantic_risk, 'touches_payment') and semantic_risk.touches_payment:
+                risk_areas.append("💳 Payment Processing")
+            if hasattr(semantic_risk, 'touches_pii') and semantic_risk.touches_pii:
+                risk_areas.append("👤 PII/Personal Data")
+            if hasattr(semantic_risk, 'touches_database') and semantic_risk.touches_database:
+                risk_areas.append("🗄️ Database/Schema")
+            if hasattr(semantic_risk, 'touches_api_endpoints') and semantic_risk.touches_api_endpoints:
+                risk_areas.append("🌐 API Endpoints")
+            if hasattr(semantic_risk, 'touches_security_config') and semantic_risk.touches_security_config:
+                risk_areas.append("⚙️ Security Config")
+            if hasattr(semantic_risk, 'touches_infrastructure') and semantic_risk.touches_infrastructure:
+                risk_areas.append("🏗️ Infrastructure")
+            
+            if risk_areas:
+                lines.append("**Areas Touched:**")
+                for area in risk_areas:
+                    lines.append(f"- {area}")
+                lines.append("")
+            else:
+                lines.append("✅ No high-risk areas detected")
+                lines.append("")
+            
+            if hasattr(semantic_risk, 'blast_radius'):
+                lines.append(f"**Blast Radius**: {semantic_risk.blast_radius}")
+            if hasattr(semantic_risk, 'reversibility'):
+                lines.append(f"**Reversibility**: {semantic_risk.reversibility}")
+            if hasattr(semantic_risk, 'recommended_reviewers') and semantic_risk.recommended_reviewers:
+                lines.append(f"**Recommended Reviewers**: {', '.join(semantic_risk.recommended_reviewers[:3])}")
+            
+            lines.append("")
+        
+        lines.extend([
             "### Check Results",
             "",
         ])
@@ -1007,6 +1346,257 @@ class CodeReviewModule:
         
         return "\n".join(lines)
     
+    def determine_action(
+        self,
+        review_result: ReviewResult,
+        team_config: Optional[TeamConfig] = None,
+        check_results: Optional[Dict[ReviewCheckType, ReviewCheck]] = None,
+    ) -> ReviewActionResult:
+        """
+        Determine the actionable outcome for a review.
+        
+        This is the key method that decides:
+        - AUTO_MERGE: PR can be merged automatically
+        - HUMAN_REVIEW: Specific human review needed (with annotations)
+        - BLOCK: PR is blocked due to critical issues
+        - REQUEST_CHANGES: Changes needed before proceeding
+        
+        Args:
+            review_result: The complete review result
+            team_config: Team-specific configuration (optional)
+            check_results: Detailed check results for annotations
+            
+        Returns:
+            ReviewActionResult with action and supporting context
+        """
+        import time
+        start_time = time.time()
+        
+        # Load team config if not provided
+        if team_config is None:
+            team_config = load_team_config(repo=review_result.pr_info.repo)
+        
+        pr_info = review_result.pr_info
+        risk_profile = review_result.risk_profile
+        decision = review_result.decision
+        confidence = review_result.confidence
+        
+        # Get changed file paths
+        changed_paths = [f.get("filename", f.get("path", "")) for f in pr_info.files]
+        
+        # Check auto-merge eligibility using team config
+        config_loader = ConfigLoader()
+        eligible, ineligible_reason = config_loader.get_auto_merge_eligible(
+            config=team_config,
+            score=review_result.overall_score,
+            risk_level=risk_profile.risk_level.value,
+            changed_paths=changed_paths,
+            labels=pr_info.labels,
+        )
+        
+        # Determine action based on decision and eligibility
+        if decision == ReviewDecision.BLOCK:
+            # Critical issues - block the PR
+            blocking_issues = self._extract_blocking_issues(check_results or {})
+            
+            return ReviewActionResult(
+                action=ReviewAction.BLOCK,
+                reason="Critical issues detected that must be resolved",
+                confidence_score=confidence,
+                risk_score=risk_profile.overall_score,
+                risk_level=risk_profile.risk_level.value,
+                quality_score=review_result.overall_score,
+                blocking_issues=blocking_issues,
+                processing_time_ms=int((time.time() - start_time) * 1000),
+            )
+        
+        elif decision == ReviewDecision.REQUEST_CHANGES:
+            # Changes needed from author
+            changes = self._extract_requested_changes(check_results or {})
+            
+            return ReviewActionResult(
+                action=ReviewAction.REQUEST_CHANGES,
+                reason="Code changes required before this can be merged",
+                confidence_score=confidence,
+                risk_score=risk_profile.overall_score,
+                risk_level=risk_profile.risk_level.value,
+                quality_score=review_result.overall_score,
+                changes_requested=changes,
+                processing_time_ms=int((time.time() - start_time) * 1000),
+            )
+        
+        elif decision == ReviewDecision.APPROVE and eligible:
+            # All criteria met - auto-merge!
+            return ReviewActionResult(
+                action=ReviewAction.AUTO_MERGE,
+                reason="All quality and risk thresholds met for automatic merge",
+                confidence_score=confidence,
+                risk_score=risk_profile.overall_score,
+                risk_level=risk_profile.risk_level.value,
+                quality_score=review_result.overall_score,
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                metadata={
+                    "auto_merge_eligible": True,
+                    "team_config_applied": team_config.team_name or "default",
+                },
+            )
+        
+        else:
+            # Human review needed - create detailed request
+            human_review = self._create_human_review_request(
+                pr_info=pr_info,
+                risk_profile=risk_profile,
+                check_results=check_results or {},
+                ineligible_reason=ineligible_reason,
+                review_result=review_result,
+            )
+            
+            return ReviewActionResult(
+                action=ReviewAction.HUMAN_REVIEW,
+                reason=ineligible_reason or "Human review required based on risk assessment",
+                confidence_score=confidence,
+                risk_score=risk_profile.overall_score,
+                risk_level=risk_profile.risk_level.value,
+                quality_score=review_result.overall_score,
+                human_review=human_review,
+                processing_time_ms=int((time.time() - start_time) * 1000),
+            )
+    
+    def _extract_blocking_issues(
+        self,
+        check_results: Dict[ReviewCheckType, ReviewCheck],
+    ) -> List[str]:
+        """Extract list of blocking issues from check results."""
+        blocking = []
+        
+        for check_type, check in check_results.items():
+            for issue in check.issues:
+                if issue.get("severity") == "critical":
+                    location = ""
+                    if issue.get("file"):
+                        location = f" in {issue.get('file')}"
+                        if issue.get("line"):
+                            location += f":{issue.get('line')}"
+                    
+                    blocking.append(
+                        f"[{check_type.value.upper()}]{location}: {issue.get('message', 'Critical issue')}"
+                    )
+        
+        return blocking
+    
+    def _extract_requested_changes(
+        self,
+        check_results: Dict[ReviewCheckType, ReviewCheck],
+    ) -> List[str]:
+        """Extract list of requested changes from check results."""
+        changes = []
+        
+        for check_type, check in check_results.items():
+            for issue in check.issues:
+                if issue.get("severity") in ("high", "medium"):
+                    changes.append(
+                        f"[{check_type.value}]: {issue.get('message', 'Issue found')}"
+                    )
+            
+            # Include suggestions
+            for suggestion in check.suggestions:
+                changes.append(f"[{check_type.value}]: {suggestion}")
+        
+        return changes[:20]  # Limit to top 20
+    
+    def _create_human_review_request(
+        self,
+        pr_info: PullRequestInfo,
+        risk_profile: RiskProfile,
+        check_results: Dict[ReviewCheckType, ReviewCheck],
+        ineligible_reason: Optional[str],
+        review_result: ReviewResult,
+    ) -> HumanReviewRequest:
+        """
+        Create a detailed human review request with specific file/line annotations.
+        
+        This tells the human reviewer exactly what to look at and why.
+        """
+        # Determine priority based on risk and confidence
+        if risk_profile.risk_level == RiskLevel.CRITICAL:
+            priority = ReviewPriority.CRITICAL
+        elif risk_profile.risk_level == RiskLevel.HIGH:
+            priority = ReviewPriority.HIGH
+        elif review_result.confidence < 0.6:
+            priority = ReviewPriority.HIGH
+        elif review_result.confidence < 0.8:
+            priority = ReviewPriority.MEDIUM
+        else:
+            priority = ReviewPriority.LOW
+        
+        # Create file annotations from issues
+        annotations = []
+        for check_type, check in check_results.items():
+            for issue in check.issues:
+                if issue.get("file"):
+                    line_ranges = []
+                    if issue.get("line"):
+                        start_line = issue.get("line")
+                        end_line = issue.get("end_line", start_line)
+                        line_ranges.append(LineRange(start=start_line, end=end_line))
+                    
+                    annotations.append(FileAnnotation(
+                        file_path=issue.get("file"),
+                        line_ranges=line_ranges,
+                        reason=issue.get("message", "Review needed"),
+                        category=check_type.value,
+                        severity=issue.get("severity", "medium"),
+                        ai_confidence=check.score,
+                        suggested_fix=issue.get("suggestion"),
+                        context=issue.get("context"),
+                    ))
+        
+        # Determine what AI already verified (passed checks)
+        ai_verified = []
+        for check_type, check in check_results.items():
+            if check.passed and check.score >= 0.8:
+                ai_verified.append(f"{check_type.value.title()} check passed ({check.score:.0%})")
+        
+        # Determine focus areas based on failed/low-score checks
+        focus_areas = []
+        for check_type, check in check_results.items():
+            if not check.passed or check.score < 0.7:
+                focus_areas.append(
+                    f"{check_type.value.title()}: Score {check.score:.0%} - needs attention"
+                )
+        
+        # Add focus based on risk factors
+        for factor in risk_profile.risk_factors[:3]:  # Top 3 risk factors
+            focus_areas.append(f"Risk: {factor.description} (weight: {factor.weight:.0%})")
+        
+        # Estimate review time based on complexity
+        base_time = 10  # minutes
+        if pr_info.changed_files_count > 10:
+            base_time += 10
+        if pr_info.additions + pr_info.deletions > 500:
+            base_time += 10
+        if len(annotations) > 5:
+            base_time += 5
+        if risk_profile.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+            base_time += 10
+        
+        return HumanReviewRequest(
+            pr_number=int(pr_info.pr_id.split("/")[-1]) if "/" in pr_info.pr_id else 0,
+            repository=pr_info.repo,
+            title=pr_info.title,
+            reason=ineligible_reason or "Human review required based on risk assessment",
+            priority=priority,
+            annotations=annotations,
+            ai_verified=ai_verified,
+            focus_areas=focus_areas,
+            ai_summary=f"Review of {pr_info.detected_intent.value if pr_info.detected_intent else 'change'} "
+                      f"with {pr_info.changed_files_count} files changed",
+            risk_level=risk_profile.risk_level.value,
+            risk_score=risk_profile.overall_score,
+            confidence_score=review_result.confidence,
+            expected_review_time_minutes=base_time,
+        )
+
     def _get_automation_mode(
         self,
         repo: str,

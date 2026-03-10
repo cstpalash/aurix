@@ -1,0 +1,152 @@
+# Aurix Team Configuration Example
+# Place this file at .aurix/config.yaml in your repository
+# to customize Aurix behavior for your team
+
+# Team identification (optional, for tracking)
+team_name: "Platform Engineering"
+team_id: "eng-platform"
+
+# Auto-merge configuration
+auto_merge:
+  # Enable/disable auto-merge capability
+  enabled: true
+  
+  # Minimum quality score required for auto-merge (0.0-1.0)
+  min_score: 0.85
+  
+  # Maximum risk level allowed for auto-merge
+  # Options: minimal, low, medium, high, critical
+  max_risk_level: low
+  
+  # Require all CI checks to pass before auto-merge
+  require_all_checks_pass: true
+  
+  # Require CI to pass before auto-merge
+  require_ci_pass: true
+  
+  # Paths that should never be auto-merged (glob patterns)
+  excluded_paths:
+    - "**/*.sql"           # Database migrations
+    - "**/infrastructure/**"  # Infrastructure code
+    - "**/secrets/**"      # Secret configurations
+  
+  # Branches that are protected from auto-merge
+  protected_branches:
+    - main
+    - master
+    - production
+    - release/*
+
+# Human review requirements
+human_review:
+  # Paths that always require human review (glob patterns)
+  always_review_paths:
+    - "**/security/**"
+    - "**/auth/**"
+    - "**/payment/**"
+    - "**/*secret*"
+    - "**/*credential*"
+    - "**/api/v1/**"       # API changes need review
+  
+  # PR labels that trigger mandatory human review
+  always_review_labels:
+    - security
+    - breaking-change
+    - needs-review
+    - infrastructure
+  
+  # Minimum number of human reviewers required
+  min_reviewers: 1
+
+# Risk assessment configuration
+risk:
+  # Risk level thresholds (0.0-1.0)
+  # Score below threshold = that risk level
+  thresholds:
+    minimal: 0.1
+    low: 0.3
+    medium: 0.5
+    high: 0.7
+    critical: 0.9
+  
+  # Weights for risk dimensions (should sum to ~1.0)
+  weights:
+    impact: 0.20          # How significant is the change?
+    blast_radius: 0.15    # How many systems affected?
+    reversibility: 0.15   # How easy to rollback?
+    compliance: 0.10      # Regulatory/compliance impact
+    security: 0.15        # Security implications
+    data_sensitivity: 0.10 # Sensitive data handling
+    frequency: 0.05       # How often is this changed?
+    complexity: 0.10      # Code complexity
+
+# Review checks configuration
+checks:
+  security:
+    enabled: true
+    weight: 1.5           # Higher weight = more important
+    block_on_failure: true # Block PR if security check fails
+    min_score: 0.7
+  
+  logic:
+    enabled: true
+    weight: 1.2
+    block_on_failure: false
+    min_score: 0.6
+  
+  style:
+    enabled: true
+    weight: 0.8
+    block_on_failure: false
+    min_score: 0.5
+  
+  complexity:
+    enabled: true
+    weight: 1.0
+    block_on_failure: false
+    min_score: 0.6
+  
+  documentation:
+    enabled: true
+    weight: 0.7
+    block_on_failure: false
+    min_score: 0.4
+  
+  performance:
+    enabled: true
+    weight: 0.9
+    block_on_failure: false
+    min_score: 0.5
+
+# Graduation settings for confidence-based automation
+# As Aurix learns your team's patterns, it can graduate
+# to higher automation levels
+graduation:
+  # Minimum number of review outcomes before graduation
+  min_outcomes: 20
+  
+  # Minimum confidence required to graduate
+  min_confidence: 0.85
+  
+  # Observation period before graduation (days)
+  observation_days: 14
+
+# Custom rules (advanced)
+# Define custom rules for specific scenarios
+custom_rules:
+  - name: "Small doc changes"
+    conditions:
+      - type: file_pattern
+        pattern: "**/*.md"
+      - type: lines_changed
+        max: 50
+    action: auto_merge
+    
+  - name: "Dependency updates"
+    conditions:
+      - type: file_pattern
+        pattern: "**/package*.json"
+      - type: label
+        value: "dependencies"
+    action: human_review
+    priority: low

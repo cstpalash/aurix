@@ -26,17 +26,17 @@ Unlike traditional automation that blindly removes humans, AURIX ensures AI auto
 |-----------|----------|------|
 | Compute | GitHub Actions | **Free** |
 | Storage | JSON files in `.aurix/` | **Free** |
-| AI Review | OpenAI GPT-4o-mini | **~$0.01/review** |
+| AI Review | OpenAI (configurable model) | **~$0.01/review** |
 | Triggers | GitHub webhooks | **Free** |
 | State | GitHub Actions cache | **Free** |
 
 ## ✨ Key Features
 
-### 🤖 AI-Enhanced Code Review
-- **GPT-4o-mini** powered analysis (~$0.01 per review)
-- Security vulnerability detection
-- Logic error identification  
-- Code style and best practices
+### 🤖 AI-Enhanced Code Review (3-Level AI)
+- **Level 1: Intent Detection** - AI reads code to understand what it DOES
+- **Level 2: Semantic Risk** - AI identifies auth, payment, PII, security implications
+- **Level 3: Code Analysis** - Security vulnerabilities, logic errors, style issues
+- **Configurable model** - Default: `gpt-4o-mini`, override via `AURIX_AI_MODEL` env var
 - Graceful fallback to rule-based when no API key
 
 ### 📊 Confidence-Based Automation Graduation
@@ -69,9 +69,9 @@ Uses **Wilson score intervals** for statistically rigorous confidence scoring.
 │                                 ▼                                    │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │                    GENERIC MODULE SYSTEM                       │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐   │   │
-│  │  │ Code Review │  │    SDLC     │  │  Your Custom Module │   │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────────────┘   │   │
+│  │  ┌─────────────┐  ┌─────────────────────────────────────┐    │   │
+│  │  │ Code Review │  │       Your Custom Module            │    │   │
+│  │  └─────────────┘  └─────────────────────────────────────┘    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌──────────────────────────────────────────────────────────────┐   │
@@ -85,19 +85,238 @@ Uses **Wilson score intervals** for statistically rigorous confidence scoring.
 
 ### 1. Autonomous Code Review
 When you open a PR, Aurix automatically:
-- 🔍 Detects intent (feature, bugfix, hotfix, refactor)
-- ⚠️ Assesses risk (impact, security, complexity)
-- 🤖 Runs AI analysis via GPT-4o-mini (optional)
+- 🔍 Detects intent (feature, bugfix, hotfix, refactor) using AI
+- ⚠️ Assesses semantic risk (auth, payments, PII, database) using AI
+- 🤖 Runs AI code analysis (configurable model, default: gpt-4o-mini)
 - 📊 Calculates confidence score
 - 💬 Posts review with decision and reasoning
 - 📈 Tracks outcomes for graduation
 
-### 2. Autonomous SDLC Pipeline
-When you push to main, the pipeline runs:
-- **Lint** → Code style checks (ruff, black)
-- **Test** → Unit tests with pytest
-- **Build** → Package build
-- **Security** → Vulnerability scan (bandit)
+### 2. Autonomous Merge (NEW! 🆕)
+When all thresholds are met, Aurix can automatically merge PRs:
+- ✅ **Auto-Merge**: All quality/risk thresholds met → merge automatically
+- 👤 **Human Review**: Specific files/lines highlighted → focused review
+- 🚫 **Block**: Critical issues found → PR blocked with details
+- 📝 **Request Changes**: Fixable issues → author must address
+
+---
+
+## 🔬 How the PR Review Pipeline Works
+
+When you create or update a PR, here's the complete flow:
+
+### Step-by-Step Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PR: "feat: add user auth"                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 1: AI-POWERED INTENT DETECTION                            │
+│  ────────────────────────────────────                           │
+│  🧠 Uses AI (configurable model) to READ THE ACTUAL CODE:       │
+│  • What the code actually DOES (not just title pattern matching)│
+│  • Whether PR title matches the changes                         │
+│  • Hidden changes not mentioned in description                  │
+│  • Scope creep (PR doing more than stated)                      │
+│                                                                 │
+│  Falls back to heuristics (title/label patterns) if no AI:     │
+│  → Detected: FEATURE | BUGFIX | HOTFIX | SECURITY_PATCH | etc  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 2: AI-POWERED SEMANTIC RISK ASSESSMENT                    │
+│  ────────────────────────────────────────────                   │
+│  🧠 Uses AI (configurable model) to SEMANTICALLY ANALYZE:       │
+│  • 🔐 Authentication changes (login, JWT, sessions)             │
+│  • 🛡️ Authorization changes (permissions, roles, ACLs)          │
+│  • 💳 Payment processing (Stripe, billing, transactions)        │
+│  • 👤 PII handling (personal data, GDPR, privacy)               │
+│  • 🗄️ Database changes (schemas, migrations, queries)           │
+│  • 🌐 API endpoint changes (routes, controllers)                │
+│  • ⚙️ Security config (CORS, headers, secrets)                  │
+│  • 🏗️ Infrastructure (Terraform, k8s, Docker)                   │
+│                                                                 │
+│  Also calculates:                                               │
+│  • Blast radius (how many systems affected)                     │
+│  • Reversibility (easy/moderate/hard to rollback)               │
+│  • Recommended reviewers (security team, DBA, etc.)             │
+│                                                                 │
+│  Falls back to heuristics (file path patterns) if no AI:       │
+│  → Risk Level: MINIMAL | LOW | MEDIUM | HIGH | CRITICAL         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 3: EXECUTE CHECKS                                         │
+│  ─────────────────────────                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ 🤖 AI Review │  │ 🔒 Security  │  │ 📝 Style     │          │
+│  │ (configurable│  │   Patterns   │  │   Checks     │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ 🧠 Logic     │  │ 📊 Complexity│  │ 📚 Docs      │          │
+│  │   Analysis   │  │   Metrics    │  │   Coverage   │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 4: CALCULATE OVERALL SCORE                                │
+│  ───────────────────────────────                                │
+│  Weighted combination:                                          │
+│  • Security: 2.0x weight (most important)                       │
+│  • Logic: 1.5x weight                                           │
+│  • Complexity: 1.2x weight                                      │
+│  • Coverage/Performance: 1.0x weight                            │
+│  • Style/Docs: 0.5x weight                                      │
+│  → Overall Score: 0.0 to 1.0                                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 5: MAKE DECISION                                          │
+│  ─────────────────────                                          │
+│                                                                 │
+│  if critical_issues OR security_failed:                         │
+│      → BLOCK (95% confidence)                                   │
+│                                                                 │
+│  elif high_severity_issues:                                     │
+│      → REQUEST_CHANGES (85% confidence)                         │
+│                                                                 │
+│  elif score >= 0.8:                                             │
+│      → APPROVE (confidence = score)                             │
+│                                                                 │
+│  elif score >= 0.6:                                             │
+│      → REQUEST_CHANGES (confidence = score)                     │
+│                                                                 │
+│  else:                                                          │
+│      → NEEDS_DISCUSSION (low confidence)                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 6: CHECK ESCALATION (Human Review Needed?)                │
+│  ───────────────────────────────────────────────                │
+│                                                                 │
+│  Human review required if:                                      │
+│  • Shadow mode (new repos always start here)                    │
+│  • Confidence < 80%                                             │
+│  • Risk level is HIGH or CRITICAL                               │
+│  • BLOCK decision (needs human confirmation)                    │
+│  • APPROVE in suggestion mode                                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 7: POST RESULT TO PR                                      │
+│  ─────────────────────────                                      │
+│                                                                 │
+│  ## 🤖 Aurix Code Review                                        │
+│                                                                 │
+│  ✅ **Decision**: APPROVE                                       │
+│  🚀 **Automation Mode**: Auto with Review                       │
+│  📊 **Confidence**: 92%                                         │
+│                                                                 │
+│  ### Check Results                                              │
+│  - ✅ Security: 100%                                            │
+│  - ✅ Logic: 95%                                                │
+│  - ✅ Style: 88%                                                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Decision Outcomes
+
+| Decision | Meaning | Action |
+|----------|---------|--------|
+| **APPROVE** | All checks pass, low risk | Can auto-merge if thresholds met |
+| **REQUEST_CHANGES** | Fixable issues found | Author must address issues |
+| **NEEDS_DISCUSSION** | Low confidence, unclear | Human review required |
+| **BLOCK** | Critical/security issues | PR blocked, must fix first |
+
+### Security Patterns Detected
+
+Aurix automatically detects these security issues:
+
+| Pattern | Severity | Example |
+|---------|----------|---------|
+| Hardcoded passwords | 🔴 Critical | `password = "secret123"` |
+| Hardcoded API keys | 🔴 Critical | `api_key = "sk-..."` |
+| Shell injection | 🔴 Critical | `subprocess.run(shell=True)` |
+| Unsafe eval/exec | 🟠 High | `eval(user_input)` |
+| Unsafe pickle | 🟠 High | `pickle.load(file)` |
+| Unsafe YAML | 🟠 High | `yaml.load()` without Loader |
+| Insecure HTTP | 🟡 Medium | `http://api.example.com` |
+
+---
+
+## 🎓 Graduation System
+
+Over time, as Aurix makes correct decisions (validated by human feedback), it graduates through automation levels:
+
+```
+SHADOW → SUGGESTION → AUTO_WITH_REVIEW → FULL_AUTO
+  │           │              │               │
+  │           │              │               └─ 95%+ confidence, <2% error rate
+  │           │              └─ 85%+ confidence, 10% spot-check
+  │           └─ 70%+ confidence, human approves
+  └─ All decisions logged, human decides (new repos start here)
+```
+
+The confidence score uses **Wilson score intervals** - a statistical method that accounts for sample size, so a repo needs ~20+ reviews before it can graduate to higher autonomy levels.
+
+### Graduation Requirements
+
+| Mode | Min Confidence | Min Outcomes | Max Error Rate |
+|------|---------------|--------------|----------------|
+| Shadow | 0% | 0 | N/A |
+| Suggestion | 70% | 10 | 15% |
+| Auto + Review | 85% | 20 | 5% |
+| Full Auto | 95% | 50 | 2% |
+
+---
+
+## 🔧 Team Configuration (NEW! 🆕)
+
+Each team can customize Aurix behavior with `.aurix/config.yaml`:
+
+```yaml
+# Team identification
+team_name: "Platform Engineering"
+
+# Auto-merge settings
+auto_merge:
+  enabled: true
+  min_score: 0.85              # Minimum quality score
+  max_risk_level: low          # Maximum allowed risk
+  excluded_paths:
+    - "**/*.sql"               # Never auto-merge SQL
+    - "**/infrastructure/**"   # Infra needs review
+
+# Human review requirements
+human_review:
+  always_review_paths:
+    - "**/security/**"         # Always review security
+    - "**/auth/**"             # Always review auth
+  min_reviewers: 1
+
+# Risk thresholds (customize for your team)
+risk:
+  thresholds:
+    minimal: 0.1
+    low: 0.3
+    medium: 0.5
+    high: 0.7
+    critical: 0.9
+```
+
+See `.aurix/config.example.yaml` for full configuration options.
 
 ## 🏃 Quick Start
 
@@ -135,6 +354,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # AURIX_AI_MODEL: gpt-4o  # Optional: override default model
         run: |
           python -m aurix.actions.run \
             --repo "${{ github.repository }}" \
@@ -145,6 +365,7 @@ jobs:
 2. **Add OpenAI API key** (optional - enables AI-enhanced reviews):
    - Go to **Settings → Secrets → Actions**
    - Add `OPENAI_API_KEY`
+   - Optionally add `AURIX_AI_MODEL` to override the default model (e.g., `gpt-4o`)
 
 3. **Open a PR** and watch Aurix analyze it! 🎉
 
@@ -219,9 +440,26 @@ automation:
 # Required for GitHub integration (automatically provided in Actions)
 GITHUB_TOKEN=ghp_your_personal_access_token
 
-# Optional: Enable AI-enhanced reviews (~$0.01/review)
+# Optional: Enable AI-enhanced reviews (~$0.01/review with gpt-4o-mini)
 OPENAI_API_KEY=sk-your-openai-key
+
+# Optional: Override the default AI model (default: gpt-4o-mini)
+# Teams can use more powerful models like gpt-4o for critical repos
+AURIX_AI_MODEL=gpt-4o-mini
 ```
+
+### AI Model Configuration
+
+| Model | Cost (per 1M tokens) | Best For |
+|-------|---------------------|----------|
+| `gpt-4o-mini` (default) | $0.15 input / $0.60 output | Cost-effective reviews |
+| `gpt-4o` | $2.50 input / $10.00 output | High-stakes code |
+| `gpt-4-turbo` | $10.00 input / $30.00 output | Maximum accuracy |
+
+Configure via:
+- **Environment variable**: `AURIX_AI_MODEL=gpt-4o`
+- **Constructor**: `AIReviewer(model="gpt-4o")`
+- **With custom costs**: `AIReviewer(model="gpt-4o", input_cost_per_1m=2.50, output_cost_per_1m=10.00)`
 
 ## 🔑 Key Concepts
 
@@ -272,31 +510,6 @@ jobs:
             -d '{"repo": "${{ github.repository }}", "pr_number": ${{ github.event.pull_request.number }}}'
 ```
 
-### SDLC Pipeline Workflow
-
-```yaml
-# .github/workflows/aurix-pipeline.yml
-name: Aurix SDLC Pipeline
-on:
-  push:
-    branches: [main, develop]
-
-jobs:
-  aurix-pipeline:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Aurix Pipeline
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AURIX_API_URL: ${{ secrets.AURIX_API_URL }}
-        run: |
-          curl -X POST "$AURIX_API_URL/api/v1/pipeline" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"repo": "${{ github.repository }}", "branch": "${{ github.ref_name }}"}'
-```
-
 ## 🧪 Testing
 
 ```bash
@@ -318,39 +531,38 @@ aurix/
 │   ├── __init__.py
 │   ├── main.py                 # Main entry point
 │   ├── config.py               # Configuration management
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── main.py             # FastAPI server
+│   ├── actions/
+│   │   └── run.py              # GitHub Actions runner
+│   ├── ai/
+│   │   └── reviewer.py         # AI reviewer (configurable model)
 │   ├── core/
 │   │   ├── __init__.py
+│   │   ├── engine.py           # Main Aurix engine
+│   │   ├── module.py           # Module base & registry
 │   │   ├── risk_assessor.py    # Risk assessment engine
-│   │   ├── confidence_engine.py # Confidence scoring
-│   │   ├── task_decomposer.py  # Task breakdown
-│   │   └── micro_agent.py      # Agent orchestration
+│   │   └── confidence_engine.py # Confidence scoring (Wilson score)
 │   ├── modules/
 │   │   ├── __init__.py
-│   │   ├── code_review.py      # Code review automation
-│   │   └── sdlc.py             # SDLC automation
+│   │   └── code_review.py      # Code review automation
+│   ├── config/
+│   │   └── team_config.py      # Team configuration loader
+│   ├── models/
+│   │   └── review_action.py    # Review action models
 │   ├── integrations/
-│   │   ├── __init__.py
-│   │   └── github.py           # GitHub integration
-│   └── cli/
-│       ├── __init__.py
-│       └── commands.py         # CLI commands
+│   │   └── github.py           # GitHub API integration
+│   └── storage/
+│       ├── base.py             # Storage interface
+│       └── file_storage.py     # JSON file-based storage
 ├── tests/
-│   ├── __init__.py
-│   ├── test_risk_assessor.py
-│   ├── test_confidence_engine.py
-│   └── test_code_review.py
+│   └── ...
 ├── .github/
 │   └── workflows/
-│       ├── aurix-review.yml
-│       └── aurix-pipeline.yml
+│       └── aurix-review.yml
 ├── aurix.yaml                  # Configuration file
 ├── pyproject.toml              # Project metadata
 └── README.md
 ```
 
-## �📄 License
+## 📄 License
 
 MIT License - See LICENSE file for details

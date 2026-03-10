@@ -2,7 +2,7 @@
 GitHub Integration Layer for Aurix Platform
 
 Provides integration with GitHub API and GitHub Actions
-for code review and SDLC automation.
+for code review, auto-merge, and SDLC automation.
 """
 
 from __future__ import annotations
@@ -23,8 +23,16 @@ from aurix.modules.code_review import (
     PullRequestInfo,
     ReviewResult,
     ReviewDecision,
+    ReviewCheckType,
+    ReviewCheck,
 )
 from aurix.modules.sdlc import SDLCModule, PipelineConfig
+from aurix.models.review_action import (
+    ReviewAction,
+    ReviewActionResult,
+    HumanReviewRequest,
+)
+from aurix.config.team_config import TeamConfig, load_team_config
 
 
 class GitHubEventType(str, Enum):
@@ -838,3 +846,322 @@ class GitHubIntegration:
     ) -> Dict[str, Any]:
         """Get graduation status for code review automation."""
         return self.code_review.get_graduation_status(f"{owner}/{repo}")
+
+    async def review_and_act(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        team_config: Optional[TeamConfig] = None,
+        dry_run: bool = False,
+    ) -> ReviewActionResult:
+        """
+        Review a pull request and take appropriate action.
+        
+        This is the main entry point for autonomous PR handling.
+        Based on review results and team config, it will:
+        - AUTO_MERGE if all criteria are met
+        - Request HUMAN_REVIEW with specific annotations
+        - BLOCK if critical issues found
+        - REQUEST_CHANGES for fixable issues
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: Pull request number
+            team_config: Optional team-specific configuration
+            dry_run: If True, don't actually merge
+            
+        Returns:
+            ReviewActionResult with action taken
+        """
+        # First, perform the review
+        review_result = await self.review_pull_request(owner, repo, pr_number)
+        
+        # Load team config if not provided
+        if team_config is None:
+            team_config = load_team_config(repo=f"{owner}/{repo}")
+        
+        # Determine the action
+        action_result = self.code_review.determine_action(
+            review_result=review_result,
+            team_config=team_config,
+        )
+        
+        # Get PR data for SHA
+        pr_data = await self.client.get_pull_request(owner, repo, pr_number)
+        head_sha = pr_data.get("head", {}).get("sha", "")
+        
+        # Execute the action
+        if action_result.action == ReviewAction.AUTO_MERGE:
+            await self._execute_auto_merge(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                pr_data=pr_data,
+                action_result=action_result,
+                dry_run=dry_run,
+            )
+        
+        elif action_result.action == ReviewAction.HUMAN_REVIEW:
+            await self._request_human_review(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                action_result=action_result,
+            )
+        
+        elif action_result.action == ReviewAction.BLOCK:
+            await self._block_pr(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                action_result=action_result,
+            )
+        
+        elif action_result.action == ReviewAction.REQUEST_CHANGES:
+            await self._request_changes(
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                action_result=action_result,
+            )
+        
+        return action_result
+    
+    async def _execute_auto_merge(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        pr_data: Dict[str, Any],
+        action_result: ReviewActionResult,
+        dry_run: bool = False,
+    ) -> None:
+        """Execute auto-merge for a PR."""
+        head_sha = pr_data.get("head", {}).get("sha", "")
+        
+        # Create check run showing auto-merge decision
+        await self.client.create_check_run(
+            owner=owner,
+            repo=repo,
+            name="Aurix Auto-Review",
+            head_sha=head_sha,
+            status="completed",
+            conclusion="success",
+            output={
+                "title": "✅ Auto-Merge Approved",
+                "summary": f"All quality and risk thresholds met for automatic merge.\n\n"
+                          f"**Confidence:** {action_result.confidence_score:.0%}\n"
+                          f"**Risk Level:** {action_result.risk_level}\n"
+                          f"**Quality Score:** {action_result.quality_score:.0%}",
+            },
+        )
+        
+        # Submit approving review
+        await self.client.create_pull_request_review(
+            owner=owner,
+            repo=repo,
+            pr_number=pr_number,
+            event="APPROVE",
+            body=f"## ✅ Aurix Auto-Approved\n\n"
+                 f"This PR has been automatically approved based on:\n"
+                 f"- **Quality Score:** {action_result.quality_score:.0%}\n"
+                 f"- **Risk Level:** {action_result.risk_level}\n"
+                 f"- **Confidence:** {action_result.confidence_score:.0%}\n\n"
+                 f"*{action_result.reason}*",
+        )
+        
+        if not dry_run:
+            # Actually merge the PR
+            try:
+                merge_result = await self.client.merge_pull_request(
+                    owner=owner,
+                    repo=repo,
+                    pr_number=pr_number,
+                    merge_method="squash",
+                    commit_title=f"{pr_data.get('title', 'Merge')} (#{pr_number})",
+                    commit_message=f"Auto-merged by Aurix\n\n"
+                                  f"Quality: {action_result.quality_score:.0%} | "
+                                  f"Risk: {action_result.risk_level} | "
+                                  f"Confidence: {action_result.confidence_score:.0%}",
+                )
+                
+                # Add success label
+                await self.client.add_labels(
+                    owner, repo, pr_number, ["aurix:auto-merged"]
+                )
+                
+            except Exception as e:
+                # If merge fails, post a comment
+                await self.client.create_comment(
+                    owner=owner,
+                    repo=repo,
+                    issue_number=pr_number,
+                    body=f"## ⚠️ Auto-Merge Failed\n\n"
+                         f"Aurix approved this PR for auto-merge, but the merge failed:\n"
+                         f"```\n{str(e)}\n```\n\n"
+                         f"Please merge manually or resolve any conflicts.",
+                )
+        else:
+            # Add label indicating it would have been merged
+            await self.client.add_labels(
+                owner, repo, pr_number, ["aurix:auto-merge-eligible"]
+            )
+    
+    async def _request_human_review(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        action_result: ReviewActionResult,
+    ) -> None:
+        """Request human review with specific annotations."""
+        human_review = action_result.human_review
+        
+        # Create check run showing review needed
+        await self.client.create_check_run(
+            owner=owner,
+            repo=repo,
+            name="Aurix Auto-Review",
+            head_sha=head_sha,
+            status="completed",
+            conclusion="neutral",
+            output={
+                "title": "👤 Human Review Required",
+                "summary": f"{action_result.reason}\n\n"
+                          f"**Confidence:** {action_result.confidence_score:.0%}\n"
+                          f"**Risk Level:** {action_result.risk_level}",
+            },
+        )
+        
+        # Post detailed review request as comment
+        if human_review:
+            body = human_review.to_github_body()
+        else:
+            body = f"## 👤 Human Review Required\n\n{action_result.reason}"
+        
+        await self.client.create_comment(
+            owner=owner,
+            repo=repo,
+            issue_number=pr_number,
+            body=body,
+        )
+        
+        # Add inline comments for specific annotations
+        if human_review and human_review.annotations:
+            review_comments = []
+            for ann in human_review.annotations[:20]:  # GitHub limits
+                if ann.line_ranges:
+                    for lr in ann.line_ranges[:1]:  # Use first line range
+                        review_comments.append({
+                            "path": ann.file_path,
+                            "line": lr.end,  # Use end line for comment
+                            "body": ann.to_github_comment(),
+                        })
+            
+            if review_comments:
+                await self.client.create_pull_request_review(
+                    owner=owner,
+                    repo=repo,
+                    pr_number=pr_number,
+                    event="COMMENT",
+                    body="Aurix has identified specific areas that need human review. "
+                         "See inline comments below.",
+                    comments=review_comments,
+                )
+        
+        # Add labels
+        labels = ["aurix:needs-review"]
+        if human_review and human_review.priority.value in ("high", "critical"):
+            labels.append("priority:high")
+        
+        await self.client.add_labels(owner, repo, pr_number, labels)
+    
+    async def _block_pr(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        action_result: ReviewActionResult,
+    ) -> None:
+        """Block a PR due to critical issues."""
+        # Create failing check run
+        await self.client.create_check_run(
+            owner=owner,
+            repo=repo,
+            name="Aurix Auto-Review",
+            head_sha=head_sha,
+            status="completed",
+            conclusion="failure",
+            output={
+                "title": "🚫 PR Blocked - Critical Issues",
+                "summary": f"This PR has been blocked due to critical issues.\n\n"
+                          f"**Issues:**\n" + 
+                          "\n".join(f"- {issue}" for issue in action_result.blocking_issues[:10]),
+            },
+        )
+        
+        # Request changes
+        await self.client.create_pull_request_review(
+            owner=owner,
+            repo=repo,
+            pr_number=pr_number,
+            event="REQUEST_CHANGES",
+            body=f"## 🚫 PR Blocked\n\n"
+                 f"Critical issues must be resolved before this can be merged:\n\n" +
+                 "\n".join(f"- {issue}" for issue in action_result.blocking_issues) +
+                 f"\n\n*Confidence: {action_result.confidence_score:.0%}*",
+        )
+        
+        # Add labels
+        await self.client.add_labels(
+            owner, repo, pr_number, ["aurix:blocked", "critical"]
+        )
+    
+    async def _request_changes(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        action_result: ReviewActionResult,
+    ) -> None:
+        """Request changes from the PR author."""
+        # Create check run
+        await self.client.create_check_run(
+            owner=owner,
+            repo=repo,
+            name="Aurix Auto-Review",
+            head_sha=head_sha,
+            status="completed",
+            conclusion="action_required",
+            output={
+                "title": "📝 Changes Requested",
+                "summary": f"Please address the following before this can be merged:\n\n" +
+                          "\n".join(f"- {change}" for change in action_result.changes_requested[:10]),
+            },
+        )
+        
+        # Request changes review
+        await self.client.create_pull_request_review(
+            owner=owner,
+            repo=repo,
+            pr_number=pr_number,
+            event="REQUEST_CHANGES",
+            body=f"## 📝 Changes Requested\n\n"
+                 f"Please address the following:\n\n" +
+                 "\n".join(f"- {change}" for change in action_result.changes_requested) +
+                 f"\n\n*Quality Score: {action_result.quality_score:.0%} | "
+                 f"Confidence: {action_result.confidence_score:.0%}*",
+        )
+        
+        # Add label
+        await self.client.add_labels(
+            owner, repo, pr_number, ["aurix:changes-requested"]
+        )
