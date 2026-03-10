@@ -85,100 +85,83 @@ Uses **Wilson score intervals** for statistically rigorous confidence scoring.
 
 ### 1. Autonomous Code Review
 When you open a PR, Aurix automatically:
-- Detects the intent (feature, bugfix, hotfix, etc.)
-- Assesses risk based on files changed, complexity, security implications
-- Runs checks (style, security, complexity, documentation)
-- Posts a review comment with decision and confidence score
-- Tracks outcomes to improve automation over time
+- 🔍 Detects intent (feature, bugfix, hotfix, refactor)
+- ⚠️ Assesses risk (impact, security, complexity)
+- 🤖 Runs AI analysis via GPT-4o-mini (optional)
+- 📊 Calculates confidence score
+- 💬 Posts review with decision and reasoning
+- 📈 Tracks outcomes for graduation
 
 ### 2. Autonomous SDLC Pipeline
-When you push to main/develop, Aurix:
-- Runs your pipeline stages (lint, test, build, deploy)
-- Assesses deployment risk per environment
-- In shadow mode: reports what it would do
-- In full auto mode: deploys with automatic rollback on failure
+When you push to main, the pipeline runs:
+- **Lint** → Code style checks (ruff, black)
+- **Test** → Unit tests with pytest
+- **Build** → Package build
+- **Security** → Vulnerability scan (bandit)
 
-## � Quick Start (5 minutes)
+## 🏃 Quick Start
 
-### Option 1: Add to Your GitHub Repo
+### Option 1: Use in Your GitHub Repository
 
-1. Copy the workflow file to your repo:
+1. **Create workflow file** `.github/workflows/aurix-review.yml`:
 
-```bash
-# In your project directory
-mkdir -p .github/workflows
-curl -o .github/workflows/aurix.yml \
-  https://raw.githubusercontent.com/palashroy/aurix/main/examples/github-workflow.yml
+```yaml
+name: Aurix Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Aurix
+        run: pip install git+https://github.com/cstpalash/aurix.git
+
+      - name: Run Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -m aurix.actions.run \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --action review
 ```
 
-2. Commit and push:
+2. **Add OpenAI API key** (optional - enables AI-enhanced reviews):
+   - Go to **Settings → Secrets → Actions**
+   - Add `OPENAI_API_KEY`
 
-```bash
-git add .github/workflows/aurix.yml
-git commit -m "Add Aurix automation"
-git push
-```
-
-3. Open a PR and watch Aurix analyze it! 🎉
+3. **Open a PR** and watch Aurix analyze it! 🎉
 
 ### Option 2: Local Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/palashroy/aurix.git
+# Clone
+git clone https://github.com/cstpalash/aurix.git
 cd aurix
 
-# Create virtual environment
+# Setup
 python -m venv venv
 source venv/bin/activate
-
-# Install (minimal dependencies)
 pip install -e .
 
-# Run a review locally
-aurix review --repo owner/repo --pr 123
-```
-
-## 🚀 Quick Start
-
-### Run the API Server
-
-```bash
-# Start the API server
-aurix serve
-
-# Or with custom port
-aurix serve --port 8080
-```
-
-### Run a Code Review
-
-```bash
-# Review a pull request
-aurix review --repo owner/repo --pr 123
-
-# Review with verbose output
-aurix review --repo owner/repo --pr 123 --verbose
-```
-
-### Run an SDLC Pipeline
-
-```bash
-# Execute a full pipeline
-aurix pipeline --repo owner/repo --branch main
-
-# Execute specific stages
-aurix pipeline --repo owner/repo --branch main --stages build,test,deploy
-```
-
-### Check Graduation Status
-
-```bash
-# View graduation status for all tasks
-aurix status
-
-# View status for a specific task
-aurix status --task code-review-style
+# Test AI review
+python examples/test_ai_review.py
 ```
 
 ## ⚙️ Configuration
@@ -232,70 +215,12 @@ automation:
 
 ### Environment Variables
 
-Create a `.env` file from the template:
-
 ```bash
-# GitHub Integration
+# Required for GitHub integration (automatically provided in Actions)
 GITHUB_TOKEN=ghp_your_personal_access_token
-GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
-# API Authentication
-AURIX_API_SECRET=your_api_secret
-
-# Database (optional)
-DATABASE_URL=postgresql://user:pass@localhost:5432/aurix
-```
-
-## 🔌 API Reference
-
-### Review Endpoint
-
-```bash
-POST /api/v1/review
-Content-Type: application/json
-
-{
-  "repo": "owner/repo",
-  "pr_number": 123
-}
-```
-
-### Pipeline Endpoint
-
-```bash
-POST /api/v1/pipeline
-Content-Type: application/json
-
-{
-  "repo": "owner/repo",
-  "branch": "main",
-  "environment": "staging"
-}
-```
-
-### Graduation Status
-
-```bash
-GET /api/v1/graduation/{task_id}
-```
-
-### Record Outcome
-
-```bash
-POST /api/v1/outcome
-Content-Type: application/json
-
-{
-  "task_id": "code-review-style",
-  "success": true,
-  "human_correction": false
-}
-```
-
-### Dashboard
-
-```bash
-GET /api/v1/dashboard
+# Optional: Enable AI-enhanced reviews (~$0.01/review)
+OPENAI_API_KEY=sk-your-openai-key
 ```
 
 ## 🔑 Key Concepts
