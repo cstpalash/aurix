@@ -1,20 +1,22 @@
-# Aurix - Autonomous Human-in-the-Loop Removal Platform
+# AURIX — Confidence Driven Autonomy Platform for Enterprise AI
 
-> **Zero-infrastructure automation that removes humans from agentic workflows with confidence**
+> **Removing humans from workflows only when risk allows.**
 
 [![GitHub Actions](https://img.shields.io/badge/runs%20on-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🎯 Vision
+## 🎯 What is AURIX?
 
-Aurix is a generic platform that systematically removes human intervention from any agentic workflow by:
+**AURIX** is a governance and control platform that determines when AI systems can safely replace human approvals in enterprise workflows. 
 
-1. **Decomposing** human steps into smaller, measurable tasks
-2. **Assessing** risk associated with automation of each task
-3. **Deploying** AI-powered micro-agents to handle tasks
-4. **Monitoring** success rates with statistical confidence
-5. **Graduating** to full automation when performance thresholds are met
+The platform:
+1. **Decomposes** workflows into discrete decision units
+2. **Evaluates** intent and risk for each decision
+3. **Measures** automation confidence with statistical rigor
+4. **Graduates** to autonomy only when risk thresholds allow
+
+Unlike traditional automation that blindly removes humans, AURIX ensures AI autonomy is **earned through demonstrated performance**, not assumed.
 
 ## 🚀 Zero-Cost PoC Architecture
 
