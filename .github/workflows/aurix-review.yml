@@ -1,0 +1,106 @@
+name: Aurix Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  aurix-review:
+    name: Automated Code Review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx pydantic
+      
+      - name: Run Aurix Code Review
+        id: review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AURIX_API_URL: ${{ secrets.AURIX_API_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -c "
+          import asyncio
+          import httpx
+          import os
+          import json
+          
+          async def review():
+              api_url = os.environ.get('AURIX_API_URL', 'http://localhost:8000')
+              
+              # Get PR info from GitHub context
+              pr_number = ${{ github.event.pull_request.number }}
+              repo = '${{ github.repository }}'
+              owner, repo_name = repo.split('/')
+              
+              async with httpx.AsyncClient() as client:
+                  response = await client.post(
+                      f'{api_url}/api/v1/review',
+                      json={
+                          'owner': owner,
+                          'repo': repo_name,
+                          'pr_number': pr_number,
+                      },
+                      headers={'Authorization': f'Bearer {os.environ.get(\"GITHUB_TOKEN\")}'},
+                      timeout=120.0,
+                  )
+                  
+                  if response.status_code == 200:
+                      result = response.json()
+                      print(f'Review completed: {result.get(\"decision\")}')
+                      print(f'Confidence: {result.get(\"confidence\", 0):.0%}')
+                      print(f'Risk Level: {result.get(\"risk_level\")}')
+                      
+                      # Set outputs
+                      with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                          f.write(f'decision={result.get(\"decision\")}\\n')
+                          f.write(f'confidence={result.get(\"confidence\", 0)}\\n')
+                          f.write(f'risk_level={result.get(\"risk_level\")}\\n')
+                  else:
+                      print(f'Review failed: {response.status_code}')
+                      print(response.text)
+                      exit(1)
+          
+          asyncio.run(review())
+          "
+      
+      - name: Comment on PR (if needed)
+        if: steps.review.outputs.decision != 'approve'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const decision = '${{ steps.review.outputs.decision }}';
+            const confidence = '${{ steps.review.outputs.confidence }}';
+            const riskLevel = '${{ steps.review.outputs.risk_level }}';
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 🤖 Aurix Code Review
+              
+              **Decision**: ${decision}
+              **Confidence**: ${(parseFloat(confidence) * 100).toFixed(0)}%
+              **Risk Level**: ${riskLevel}
+              
+              Please address the issues identified in the automated review.`
+            });

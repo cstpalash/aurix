@@ -1,0 +1,358 @@
+# Aurix Default Configuration
+# Copy to aurix.local.yaml for local overrides
+
+# Core Settings
+core:
+  log_level: INFO
+  metrics_enabled: true
+  metrics_port: 9090
+
+# Risk Assessment Configuration
+risk:
+  # Default thresholds for risk levels
+  thresholds:
+    minimal: 0.1
+    low: 0.3
+    medium: 0.5
+    high: 0.7
+    critical: 0.9
+  
+  # Risk dimension weights (must sum to ~1.0)
+  weights:
+    impact: 0.20
+    blast_radius: 0.15
+    reversibility: 0.15
+    compliance: 0.10
+    security: 0.15
+    data_sensitivity: 0.10
+    frequency: 0.05
+    complexity: 0.10
+  
+  # Risk dimension defaults
+  defaults:
+    impact: 0.5
+    blast_radius: 0.3
+    reversibility: 0.7
+    compliance: 0.2
+    security: 0.3
+    data_sensitivity: 0.3
+    frequency: 0.5
+    complexity: 0.5
+
+# Confidence Engine Configuration
+confidence:
+  # Wilson score confidence level
+  wilson_confidence_level: 0.95
+  
+  # Minimum outcomes before graduation consideration
+  min_outcomes_for_graduation: 20
+  
+  # Minimum confidence score required for graduation
+  min_confidence_for_graduation: 0.85
+  
+  # Window size for moving average calculations
+  moving_average_window: 50
+  
+  # Maximum error rate allowed for Full Auto mode
+  max_error_rate_for_full_auto: 0.02
+  
+  # Degradation detection settings
+  degradation:
+    threshold: 0.1
+    window: 10
+
+# Automation Mode Settings
+automation:
+  # Starting mode for new tasks
+  default_mode: shadow
+  
+  # Mode-specific settings
+  modes:
+    shadow:
+      description: "AI runs in parallel, human makes all decisions"
+      requires_human_approval: true
+      
+    suggestion:
+      description: "AI suggests, human approves each action"
+      requires_human_approval: true
+      min_confidence_to_enter: 0.7
+      min_success_rate: 0.85
+      
+    auto_with_review:
+      description: "AI decides, human spot-checks"
+      requires_human_approval: false
+      spot_check_rate: 0.1
+      min_confidence_to_enter: 0.85
+      min_success_rate: 0.95
+      
+    full_auto:
+      description: "AI handles everything autonomously"
+      requires_human_approval: false
+      min_confidence_to_enter: 0.95
+      min_success_rate: 0.98
+      max_risk_level: low
+
+# Code Review Module Configuration
+code_review:
+  enabled: true
+  
+  # File patterns to review
+  include_patterns:
+    - "*.py"
+    - "*.js"
+    - "*.ts"
+    - "*.go"
+    - "*.java"
+    - "*.rb"
+    - "*.rs"
+    
+  # File patterns to skip
+  exclude_patterns:
+    - "*.min.js"
+    - "*.generated.*"
+    - "*_test.go"
+    - "test_*.py"
+    - "**/vendor/**"
+    - "**/node_modules/**"
+    
+  # Security patterns to check
+  security_patterns:
+    - "password\\s*="
+    - "api_key\\s*="
+    - "secret\\s*="
+    - "\\beval\\("
+    - "\\bexec\\("
+    - "subprocess\\.call.*shell=True"
+    - "pickle\\.loads?"
+    - "yaml\\.load\\("
+    
+  # Intent detection keywords
+  intent_keywords:
+    feature:
+      - "feat"
+      - "feature"
+      - "add"
+      - "implement"
+      - "new"
+    bugfix:
+      - "fix"
+      - "bug"
+      - "issue"
+      - "resolve"
+      - "patch"
+    hotfix:
+      - "hotfix"
+      - "critical"
+      - "urgent"
+      - "emergency"
+    refactor:
+      - "refactor"
+      - "cleanup"
+      - "improve"
+      - "optimize"
+    docs:
+      - "docs"
+      - "documentation"
+      - "readme"
+      - "comment"
+    security:
+      - "security"
+      - "vulnerability"
+      - "cve"
+      - "auth"
+  
+  # Checks to run
+  checks:
+    style:
+      enabled: true
+      max_line_length: 120
+      check_trailing_whitespace: true
+    security:
+      enabled: true
+      fail_on_high_severity: true
+    complexity:
+      enabled: true
+      max_cyclomatic_complexity: 15
+    documentation:
+      enabled: true
+      require_docstrings: true
+    logic:
+      enabled: true
+
+# SDLC Module Configuration
+sdlc:
+  enabled: true
+  
+  # Pipeline stages
+  stages:
+    - name: checkout
+      timeout: 120
+      required: true
+      
+    - name: install_dependencies
+      timeout: 300
+      required: true
+      
+    - name: lint
+      timeout: 180
+      required: false
+      continue_on_fail: true
+      
+    - name: unit_tests
+      timeout: 600
+      required: true
+      
+    - name: integration_tests
+      timeout: 900
+      required: false
+      
+    - name: security_scan
+      timeout: 300
+      required: true
+      
+    - name: build
+      timeout: 600
+      required: true
+      
+    - name: deploy_staging
+      timeout: 300
+      required: true
+      requires_approval_in_mode: ["shadow", "suggestion"]
+      
+    - name: smoke_tests
+      timeout: 300
+      required: true
+      
+    - name: deploy_production
+      timeout: 300
+      required: true
+      requires_approval_in_mode: ["shadow", "suggestion", "auto_with_review"]
+      
+    - name: health_check
+      timeout: 120
+      required: true
+      
+    - name: notification
+      timeout: 60
+      required: false
+  
+  # Environment-specific settings
+  environments:
+    staging:
+      auto_deploy: true
+      approval_required: false
+    production:
+      auto_deploy: false
+      approval_required: true
+      min_staging_success_duration: 3600  # 1 hour
+  
+  # Rollback settings
+  rollback:
+    enabled: true
+    automatic: true
+    health_check_retries: 3
+    health_check_interval: 30
+
+# GitHub Integration Configuration
+github:
+  # API settings
+  api_base_url: "https://api.github.com"
+  
+  # Webhook settings
+  webhook:
+    enabled: true
+    secret_env_var: "GITHUB_WEBHOOK_SECRET"
+    
+  # Events to listen for
+  events:
+    pull_request:
+      - opened
+      - synchronize
+      - reopened
+    push:
+      - main
+      - master
+      - develop
+    
+  # Check run settings
+  check_runs:
+    enabled: true
+    name: "Aurix Analysis"
+
+# API Server Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  cors:
+    enabled: true
+    allow_origins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+    allow_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+    allow_headers:
+      - "Authorization"
+      - "Content-Type"
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+    burst: 10
+  
+  # Authentication
+  auth:
+    enabled: true
+    type: "bearer"  # bearer, api_key, or oauth2
+    secret_env_var: "AURIX_API_SECRET"
+
+# Notification Settings
+notifications:
+  slack:
+    enabled: false
+    webhook_url_env_var: "SLACK_WEBHOOK_URL"
+    channels:
+      success: "#deployments"
+      failure: "#alerts"
+      
+  email:
+    enabled: false
+    smtp_host: "smtp.example.com"
+    smtp_port: 587
+    sender: "aurix@example.com"
+    
+  pagerduty:
+    enabled: false
+    api_key_env_var: "PAGERDUTY_API_KEY"
+    service_id_env_var: "PAGERDUTY_SERVICE_ID"
+
+# Storage Configuration (File-based for PoC)
+storage:
+  # Use file-based storage (JSON files)
+  backend: file
+  
+  # Base directory for data files
+  # Relative to workspace root or absolute path
+  base_path: .aurix/data
+  
+  # Cache settings (in-memory for PoC)
+  cache:
+    enabled: true
+    type: memory
+    ttl: 3600
+    
+# Monitoring and Observability (Simplified for PoC)
+observability:
+  # Console logging
+  logging:
+    level: INFO
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+  # Health checks
+  health:
+    endpoint: "/health"
+    include_details: true

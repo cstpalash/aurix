@@ -1,0 +1,131 @@
+name: 'Aurix Workflow Automation'
+description: 'Intelligent workflow automation with confidence-based human-in-the-loop removal'
+author: 'Aurix'
+
+branding:
+  icon: 'cpu'
+  color: 'purple'
+
+inputs:
+  module:
+    description: 'Module to run: code_review or sdlc'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  config_path:
+    description: 'Path to aurix.yaml config file'
+    required: false
+    default: '.aurix/config.yaml'
+  python_version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+
+outputs:
+  decision:
+    description: 'The decision made by Aurix'
+    value: ${{ steps.aurix.outputs.decision }}
+  confidence:
+    description: 'Confidence score of the decision'
+    value: ${{ steps.aurix.outputs.confidence }}
+  automation_mode:
+    description: 'Current automation mode'
+    value: ${{ steps.aurix.outputs.automation_mode }}
+  human_review_required:
+    description: 'Whether human review is required'
+    value: ${{ steps.aurix.outputs.human_review_required }}
+  summary:
+    description: 'Summary of the analysis'
+    value: ${{ steps.aurix.outputs.summary }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+    
+    - name: Cache Aurix installation
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: aurix-${{ runner.os }}-${{ inputs.python_version }}
+    
+    - name: Install Aurix
+      shell: bash
+      run: |
+        pip install aurix
+    
+    - name: Restore Aurix state
+      uses: actions/cache@v4
+      with:
+        path: .aurix/data
+        key: aurix-state-${{ github.repository }}-${{ github.ref }}
+        restore-keys: |
+          aurix-state-${{ github.repository }}-
+    
+    - name: Run Aurix
+      id: aurix
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        AURIX_MODULE: ${{ inputs.module }}
+        AURIX_CONFIG: ${{ inputs.config_path }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_SHA: ${{ github.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        python -m aurix.actions.run
+    
+    - name: Save Aurix state
+      uses: actions/cache/save@v4
+      if: always()
+      with:
+        path: .aurix/data
+        key: aurix-state-${{ github.repository }}-${{ github.ref }}-${{ github.run_id }}
+    
+    - name: Post PR Comment
+      if: inputs.module == 'code_review' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const fs = require('fs');
+          const summaryFile = '.aurix/data/last_summary.md';
+          
+          if (fs.existsSync(summaryFile)) {
+            const summary = fs.readFileSync(summaryFile, 'utf8');
+            
+            // Find existing Aurix comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const aurixComment = comments.find(c => 
+              c.body.includes('<!-- aurix-comment -->')
+            );
+            
+            const body = `<!-- aurix-comment -->\n${summary}`;
+            
+            if (aurixComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: aurixComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+          }

@@ -1,0 +1,3 @@
+"""
+Aurix GitHub Actions integration.
+"""

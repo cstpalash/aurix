@@ -1,0 +1,281 @@
+# Aurix Code Review & SDLC Automation
+#
+# Copy this file to your repository at .github/workflows/aurix.yml
+# Then add AURIX enabled to use automatic code review and SDLC pipelines.
+#
+# This workflow:
+# 1. Runs code review on every PR
+# 2. Runs SDLC pipeline on pushes to main/develop
+# 3. Stores state in the repo for confidence tracking
+# 4. Automatically graduates from shadow → suggestion → auto → full_auto
+
+name: Aurix Automation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: write      # For caching state
+  pull-requests: write # For PR comments
+  checks: write        # For check runs
+
+jobs:
+  # Code Review runs on PRs
+  code-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    name: Aurix Code Review
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+      
+      - name: Restore Aurix State
+        uses: actions/cache@v4
+        with:
+          path: .aurix/data
+          key: aurix-${{ github.repository }}-${{ github.base_ref }}
+          restore-keys: |
+            aurix-${{ github.repository }}-
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install Aurix
+        run: pip install aurix
+      
+      - name: Run Code Review
+        id: review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "
+          import asyncio
+          import json
+          import os
+          
+          from aurix.core.engine import Aurix
+          from aurix.storage.file_storage import FileStorage
+          from aurix.modules import CodeReviewModuleAdapter
+          
+          async def main():
+              storage = FileStorage('.aurix/data')
+              aurix = Aurix(storage=storage)
+              await aurix.initialize()
+              
+              result = await aurix.execute(
+                  module='code_review',
+                  input_data={
+                      'pr_id': '${{ github.event.pull_request.number }}',
+                      'repo': '${{ github.repository }}',
+                      'title': '''${{ github.event.pull_request.title }}''',
+                      'description': '''${{ github.event.pull_request.body }}'''[:500] if '''${{ github.event.pull_request.body }}''' else '',
+                      'author': '${{ github.event.pull_request.user.login }}',
+                      'additions': ${{ github.event.pull_request.additions }},
+                      'deletions': ${{ github.event.pull_request.deletions }},
+                      'changed_files_count': ${{ github.event.pull_request.changed_files }},
+                  },
+                  context={
+                      'repo': '${{ github.repository }}',
+                      'branch': '${{ github.head_ref }}',
+                      'triggered_by': 'github_action',
+                  }
+              )
+              
+              await aurix.shutdown()
+              
+              # Output results
+              print(f'decision={result.result.decision.value}')
+              print(f'confidence={result.confidence_score:.3f}')
+              print(f'mode={result.automation_mode.value}')
+              print(f'human_required={str(result.result.human_review_required).lower()}')
+              
+              # Save for next step
+              with open('.aurix/data/last_result.json', 'w') as f:
+                  json.dump({
+                      'decision': result.result.decision.value,
+                      'confidence': result.confidence_score,
+                      'mode': result.automation_mode.value,
+                      'summary': result.result.summary,
+                      'can_graduate': result.can_graduate,
+                  }, f)
+          
+          asyncio.run(main())
+          "
+      
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let result;
+            try {
+              result = JSON.parse(fs.readFileSync('.aurix/data/last_result.json', 'utf8'));
+            } catch (e) {
+              console.log('No result file found');
+              return;
+            }
+            
+            const modeEmoji = {
+              'shadow': '👁️ Shadow',
+              'suggestion': '💡 Suggestion', 
+              'auto_with_review': '🔄 Auto+Review',
+              'full_auto': '🚀 Full Auto'
+            };
+            
+            const decisionEmoji = {
+              'approve': '✅',
+              'reject': '❌',
+              'needs_review': '👀',
+              'defer': '⏸️',
+              'escalate': '⚠️'
+            };
+            
+            const body = `## 🤖 Aurix Code Review
+            
+            ${decisionEmoji[result.decision] || '❓'} **Decision**: ${result.decision.toUpperCase()}
+            📊 **Confidence**: ${(result.confidence * 100).toFixed(1)}%
+            🎯 **Mode**: ${modeEmoji[result.mode] || result.mode}
+            
+            ### Summary
+            ${result.summary || 'Analysis complete.'}
+            
+            ${result.can_graduate ? '🎓 *This task is ready to graduate to the next automation level!*' : ''}
+            
+            ---
+            <sub>Aurix v0.1.0 | [Learn more](https://github.com/palashroy/aurix)</sub>
+            <!-- aurix-comment -->`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existing = comments.find(c => c.body.includes('<!-- aurix-comment -->'));
+            
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body.trim(),
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body.trim(),
+              });
+            }
+      
+      - name: Save Aurix State
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .aurix/data
+          key: aurix-${{ github.repository }}-${{ github.base_ref }}-${{ github.run_id }}
+
+  # SDLC Pipeline runs on pushes
+  sdlc-pipeline:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Aurix SDLC Pipeline
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Restore Aurix State
+        uses: actions/cache@v4
+        with:
+          path: .aurix/data
+          key: aurix-${{ github.repository }}-${{ github.ref_name }}
+          restore-keys: |
+            aurix-${{ github.repository }}-
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install Aurix
+        run: pip install aurix
+      
+      - name: Determine Environment
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run SDLC Pipeline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_ENV: ${{ steps.env.outputs.environment }}
+        run: |
+          python -c "
+          import asyncio
+          import os
+          
+          from aurix.core.engine import Aurix
+          from aurix.storage.file_storage import FileStorage
+          from aurix.modules import SDLCModuleAdapter
+          
+          async def main():
+              storage = FileStorage('.aurix/data')
+              aurix = Aurix(storage=storage)
+              await aurix.initialize()
+              
+              result = await aurix.execute(
+                  module='sdlc',
+                  input_data={
+                      'repo': '${{ github.repository }}',
+                      'branch': '${{ github.ref_name }}',
+                      'commit_sha': '${{ github.sha }}',
+                      'commit_message': '''${{ github.event.head_commit.message }}'''[:200],
+                      'pusher': '${{ github.actor }}',
+                      'environment': os.environ.get('DEPLOY_ENV', 'staging'),
+                  },
+                  context={
+                      'repo': '${{ github.repository }}',
+                      'branch': '${{ github.ref_name }}',
+                      'triggered_by': 'github_action',
+                  }
+              )
+              
+              await aurix.shutdown()
+              
+              print('Pipeline Results:')
+              print(f'  Decision: {result.result.decision.value}')
+              print(f'  Confidence: {result.confidence_score:.1%}')
+              print(f'  Mode: {result.automation_mode.value}')
+              print(f'  Summary: {result.result.summary}')
+              
+              # Fail if pipeline failed
+              if result.result.decision.value == 'reject':
+                  exit(1)
+          
+          asyncio.run(main())
+          "
+      
+      - name: Save Aurix State
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .aurix/data
+          key: aurix-${{ github.repository }}-${{ github.ref_name }}-${{ github.run_id }}
