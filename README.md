@@ -52,35 +52,31 @@ Uses **Wilson score intervals** for statistically rigorous confidence scoring.
 
 ## 🏗️ Architecture
 
+```mermaid
+flowchart TB
+    subgraph Core["⚙️ Core Engines"]
+        TD["🎯 Task Decomposer<br/>Intent Parser • Step Splitter"]
+        RA["⚠️ Risk Assessor<br/>Impact • Blast Radius • Reversibility"]
+        CE["📊 Confidence Engine<br/>Success Tracker • Graduation Logic"]
+    end
+    
+    subgraph Modules["📦 Module System"]
+        CR["🔍 Code Review"]
+        CM["🔧 Your Custom Module"]
+    end
+    
+    subgraph Storage["💾 File-Based Storage"]
+        S1[".aurix/data/outcomes/*.json"]
+        S2[".aurix/data/tasks/*.json"]
+        S3[".aurix/data/confidence/*.json"]
+    end
+    
+    Core --> Modules
+    Modules --> Storage
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         AURIX PLATFORM                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
-│  │  Task Decomposer │  │  Risk Assessor  │  │  Confidence Engine  │  │
-│  │                  │  │                 │  │                     │  │
-│  │  - Intent Parser │  │  - Impact Score │  │  - Success Tracker  │  │
-│  │  - Step Splitter │  │  - Blast Radius │  │  - Error Analyzer   │  │
-│  │  - Dependency    │  │  - Reversibility│  │  - Threshold Match  │  │
-│  │    Mapper        │  │  - Compliance   │  │  - Graduation Logic │  │
-│  └────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘  │
-│           │                     │                      │             │
-│           └─────────────────────┼──────────────────────┘             │
-│                                 ▼                                    │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    GENERIC MODULE SYSTEM                       │   │
-│  │  ┌─────────────┐  ┌─────────────────────────────────────┐    │   │
-│  │  │ Code Review │  │       Your Custom Module            │    │   │
-│  │  └─────────────┘  └─────────────────────────────────────┘    │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    FILE-BASED STORAGE                         │   │
-│  │   .aurix/data/outcomes/*.json  - Execution history            │   │
-│  │   .aurix/data/tasks/*.json     - Task states & modes          │   │
-│  │   .aurix/data/confidence/*.json - Graduation tracking         │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+
+---
+
 ## 📋 PoC Use Cases
 
 ### 1. Autonomous Code Review
@@ -105,131 +101,110 @@ When all thresholds are met, Aurix can automatically merge PRs:
 
 When you create or update a PR, here's the complete flow:
 
-### Step-by-Step Flow
+### Pipeline Overview
 
+```mermaid
+flowchart TD
+    A[📝 PR Created/Updated] --> B[🎯 Step 1: Intent Detection]
+    B --> C[⚠️ Step 2: Risk Assessment]
+    C --> D[🔍 Step 3: Execute Checks]
+    D --> E[📊 Step 4: Calculate Score]
+    E --> F[🤔 Step 5: Make Decision]
+    F --> G[👤 Step 6: Check Escalation]
+    G --> H[💬 Step 7: Post Result]
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PR: "feat: add user auth"                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 1: AI-POWERED INTENT DETECTION                            │
-│  ────────────────────────────────────                           │
-│  🧠 Uses AI (configurable model) to READ THE ACTUAL CODE:       │
-│  • What the code actually DOES (not just title pattern matching)│
-│  • Whether PR title matches the changes                         │
-│  • Hidden changes not mentioned in description                  │
-│  • Scope creep (PR doing more than stated)                      │
-│                                                                 │
-│  Falls back to heuristics (title/label patterns) if no AI:     │
-│  → Detected: FEATURE | BUGFIX | HOTFIX | SECURITY_PATCH | etc  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 2: AI-POWERED SEMANTIC RISK ASSESSMENT                    │
-│  ────────────────────────────────────────────                   │
-│  🧠 Uses AI (configurable model) to SEMANTICALLY ANALYZE:       │
-│  • 🔐 Authentication changes (login, JWT, sessions)             │
-│  • 🛡️ Authorization changes (permissions, roles, ACLs)          │
-│  • 💳 Payment processing (Stripe, billing, transactions)        │
-│  • 👤 PII handling (personal data, GDPR, privacy)               │
-│  • 🗄️ Database changes (schemas, migrations, queries)           │
-│  • 🌐 API endpoint changes (routes, controllers)                │
-│  • ⚙️ Security config (CORS, headers, secrets)                  │
-│  • 🏗️ Infrastructure (Terraform, k8s, Docker)                   │
-│                                                                 │
-│  Also calculates:                                               │
-│  • Blast radius (how many systems affected)                     │
-│  • Reversibility (easy/moderate/hard to rollback)               │
-│  • Recommended reviewers (security team, DBA, etc.)             │
-│                                                                 │
-│  Falls back to heuristics (file path patterns) if no AI:       │
-│  → Risk Level: MINIMAL | LOW | MEDIUM | HIGH | CRITICAL         │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 3: EXECUTE CHECKS                                         │
-│  ─────────────────────────                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ 🤖 AI Review │  │ 🔒 Security  │  │ 📝 Style     │          │
-│  │ (configurable│  │   Patterns   │  │   Checks     │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ 🧠 Logic     │  │ 📊 Complexity│  │ 📚 Docs      │          │
-│  │   Analysis   │  │   Metrics    │  │   Coverage   │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: CALCULATE OVERALL SCORE                                │
-│  ───────────────────────────────                                │
-│  Weighted combination:                                          │
-│  • Security: 2.0x weight (most important)                       │
-│  • Logic: 1.5x weight                                           │
-│  • Complexity: 1.2x weight                                      │
-│  • Coverage/Performance: 1.0x weight                            │
-│  • Style/Docs: 0.5x weight                                      │
-│  → Overall Score: 0.0 to 1.0                                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 5: MAKE DECISION                                          │
-│  ─────────────────────                                          │
-│                                                                 │
-│  if critical_issues OR security_failed:                         │
-│      → BLOCK (95% confidence)                                   │
-│                                                                 │
-│  elif high_severity_issues:                                     │
-│      → REQUEST_CHANGES (85% confidence)                         │
-│                                                                 │
-│  elif score >= 0.8:                                             │
-│      → APPROVE (confidence = score)                             │
-│                                                                 │
-│  elif score >= 0.6:                                             │
-│      → REQUEST_CHANGES (confidence = score)                     │
-│                                                                 │
-│  else:                                                          │
-│      → NEEDS_DISCUSSION (low confidence)                        │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 6: CHECK ESCALATION (Human Review Needed?)                │
-│  ───────────────────────────────────────────────                │
-│                                                                 │
-│  Human review required if:                                      │
-│  • Shadow mode (new repos always start here)                    │
-│  • Confidence < 80%                                             │
-│  • Risk level is HIGH or CRITICAL                               │
-│  • BLOCK decision (needs human confirmation)                    │
-│  • APPROVE in suggestion mode                                   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 7: POST RESULT TO PR                                      │
-│  ─────────────────────────                                      │
-│                                                                 │
-│  ## 🤖 Aurix Code Review                                        │
-│                                                                 │
-│  ✅ **Decision**: APPROVE                                       │
-│  🚀 **Automation Mode**: Auto with Review                       │
-│  📊 **Confidence**: 92%                                         │
-│                                                                 │
-│  ### Check Results                                              │
-│  - ✅ Security: 100%                                            │
-│  - ✅ Logic: 95%                                                │
-│  - ✅ Style: 88%                                                │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+
+### Step 1: AI-Powered Intent Detection
+
+🧠 Uses AI (configurable model) to **READ THE ACTUAL CODE**:
+
+| Analysis | Description |
+|----------|-------------|
+| **True Intent** | What the code actually DOES (not just title pattern matching) |
+| **Title Match** | Whether PR title matches the changes |
+| **Hidden Changes** | Changes not mentioned in description |
+| **Scope Creep** | PR doing more than stated |
+
+> Falls back to heuristics (title/label patterns) if no AI  
+> **Output:** `FEATURE` | `BUGFIX` | `HOTFIX` | `SECURITY_PATCH` | etc
+
+### Step 2: AI-Powered Semantic Risk Assessment
+
+🧠 Uses AI to **SEMANTICALLY ANALYZE** what sensitive areas the code touches:
+
+| Area | Examples |
+|------|----------|
+| 🔐 **Authentication** | Login, JWT, sessions |
+| 🛡️ **Authorization** | Permissions, roles, ACLs |
+| 💳 **Payment** | Stripe, billing, transactions |
+| 👤 **PII** | Personal data, GDPR, privacy |
+| 🗄️ **Database** | Schemas, migrations, queries |
+| 🌐 **API Endpoints** | Routes, controllers |
+| ⚙️ **Security Config** | CORS, headers, secrets |
+| 🏗️ **Infrastructure** | Terraform, k8s, Docker |
+
+**Also calculates:** Blast radius • Reversibility • Recommended reviewers
+
+> Falls back to heuristics (file path patterns) if no AI  
+> **Output:** Risk Level `MINIMAL` | `LOW` | `MEDIUM` | `HIGH` | `CRITICAL`
+
+### Step 3: Execute Checks
+
+| Check | Weight | Description |
+|-------|--------|-------------|
+| 🤖 AI Review | 2.0x | Deep code analysis |
+| 🔒 Security | 2.0x | Vulnerability patterns |
+| 🧠 Logic | 1.5x | Correctness analysis |
+| 📊 Complexity | 1.2x | Code complexity metrics |
+| 📚 Docs | 0.5x | Documentation coverage |
+| 📝 Style | 0.5x | Code style checks |
+
+### Step 4: Calculate Overall Score
+
+Weighted combination of all checks → **Overall Score: 0.0 to 1.0**
+
+### Step 5: Make Decision
+
+```python
+if critical_issues or security_failed:
+    return BLOCK          # 95% confidence
+
+elif high_severity_issues:
+    return REQUEST_CHANGES  # 85% confidence
+
+elif score >= 0.8:
+    return APPROVE        # confidence = score
+
+elif score >= 0.6:
+    return REQUEST_CHANGES  # confidence = score
+
+else:
+    return NEEDS_DISCUSSION  # low confidence
 ```
+
+### Step 6: Check Escalation
+
+**Human review required if:**
+- 🆕 Shadow mode (new repos always start here)
+- 📉 Confidence < 80%
+- 🔴 Risk level is HIGH or CRITICAL
+- 🚫 BLOCK decision (needs human confirmation)
+- ✅ APPROVE in suggestion mode
+
+### Step 7: Post Result to PR
+
+Example output:
+
+> ## 🤖 Aurix Code Review
+>
+> ✅ **Decision**: APPROVE  
+> 🚀 **Automation Mode**: Auto with Review  
+> 📊 **Confidence**: 92%
+>
+> ### Check Results
+> - ✅ Security: 100%
+> - ✅ Logic: 95%
+> - ✅ Style: 88%
 
 ### Decision Outcomes
 
@@ -260,14 +235,19 @@ Aurix automatically detects these security issues:
 
 Over time, as Aurix makes correct decisions (validated by human feedback), it graduates through automation levels:
 
+```mermaid
+flowchart LR
+    A[🌑 SHADOW] -->|70%+ confidence| B[💡 SUGGESTION]
+    B -->|85%+ confidence| C[🤖 AUTO + REVIEW]
+    C -->|95%+ confidence| D[🚀 FULL AUTO]
 ```
-SHADOW → SUGGESTION → AUTO_WITH_REVIEW → FULL_AUTO
-  │           │              │               │
-  │           │              │               └─ 95%+ confidence, <2% error rate
-  │           │              └─ 85%+ confidence, 10% spot-check
-  │           └─ 70%+ confidence, human approves
-  └─ All decisions logged, human decides (new repos start here)
-```
+
+| Mode | Description | Requirements |
+|------|-------------|--------------|
+| 🌑 **Shadow** | All decisions logged, human decides | New repos start here |
+| 💡 **Suggestion** | AI suggests, human approves | 70%+ confidence |
+| 🤖 **Auto + Review** | AI decides, human spot-checks (10%) | 85%+ confidence |
+| 🚀 **Full Auto** | Complete automation with monitoring | 95%+ confidence, <2% error rate |
 
 The confidence score uses **Wilson score intervals** - a statistical method that accounts for sample size, so a repo needs ~20+ reviews before it can graduate to higher autonomy levels.
 
