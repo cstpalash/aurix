@@ -2,29 +2,51 @@
 
 > **Zero-infrastructure automation that removes humans from agentic workflows with confidence**
 
+[![GitHub Actions](https://img.shields.io/badge/runs%20on-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ## 🎯 Vision
 
 Aurix is a generic platform that systematically removes human intervention from any agentic workflow by:
 
 1. **Decomposing** human steps into smaller, measurable tasks
 2. **Assessing** risk associated with automation of each task
-3. **Deploying** micro AI agents to handle low-risk tasks first
-4. **Monitoring** success rates and error rates in real-time
-5. **Matching** performance against risk tolerance thresholds
-6. **Graduating** to full automation with statistical confidence
+3. **Deploying** AI-powered micro-agents to handle tasks
+4. **Monitoring** success rates with statistical confidence
+5. **Graduating** to full automation when performance thresholds are met
 
-## 🚀 Zero-Cost PoC Approach
+## 🚀 Zero-Cost PoC Architecture
 
 **No servers, no databases, no infrastructure costs!**
 
-| Component | PoC Solution | Cost |
-|-----------|--------------|------|
-| Compute | GitHub Actions | Free |
-| Storage | JSON files in repo | Free |
-| Triggers | GitHub webhooks | Free |
-| State | Cached in GitHub Actions | Free |
+| Component | Solution | Cost |
+|-----------|----------|------|
+| Compute | GitHub Actions | **Free** |
+| Storage | JSON files in `.aurix/` | **Free** |
+| AI Review | OpenAI GPT-4o-mini | **~$0.01/review** |
+| Triggers | GitHub webhooks | **Free** |
+| State | GitHub Actions cache | **Free** |
 
-Aurix runs entirely within GitHub Actions, storing confidence metrics as JSON files in your repository.
+## ✨ Key Features
+
+### 🤖 AI-Enhanced Code Review
+- **GPT-4o-mini** powered analysis (~$0.01 per review)
+- Security vulnerability detection
+- Logic error identification  
+- Code style and best practices
+- Graceful fallback to rule-based when no API key
+
+### 📊 Confidence-Based Automation Graduation
+
+| Level | Mode | Description |
+|-------|------|-------------|
+| 1 | **Shadow** | AI runs silently, human decides |
+| 2 | **Suggestion** | AI suggests, human approves |
+| 3 | **Auto + Review** | AI decides, human spot-checks (10%) |
+| 4 | **Full Auto** | Complete automation with monitoring |
+
+Uses **Wilson score intervals** for statistically rigorous confidence scoring.
 
 ## 🏗️ Architecture
 
